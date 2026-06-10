@@ -12,6 +12,9 @@ on:
 permissions:
   contents: write   # needed to create/update the release on pushes to main
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   test-build-release:
     runs-on: ubuntu-latest
