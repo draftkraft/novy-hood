@@ -184,6 +184,8 @@ footer{display:flex;gap:18px;justify-content:center;margin-top:18px}
 footer a{color:var(--muted);font-size:13px;text-decoration:none;font-weight:600}footer a:hover{color:var(--accent)}
 .updateLine{display:none;margin:-8px 2px 14px;text-align:right;font-size:13px;font-weight:600}
 .updateLine.show{display:block}.updateLine a{color:var(--warn);text-decoration:none}.updateLine a:hover{text-decoration:underline}
+.updating{animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
 #toast{position:fixed;left:50%;bottom:calc(26px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);background:#000;color:#fff;padding:10px 16px;border-radius:12px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:20}
 #toast.show{opacity:.92;transform:translateX(-50%) translateY(0)}
 </style></head><body><div class=wrap>
@@ -202,11 +204,11 @@ footer a{color:var(--muted);font-size:13px;text-decoration:none;font-weight:600}
 <details class=log><summary>Activity log</summary><div id=log>%LOG%</div></details>
 <footer><a href=/wifi>WiFi</a><a href=/mqtt>MQTT</a><a href=# onclick="if(confirm('Reboot the device?'))fetch('/reset');return false">Reboot</a></footer>
 </div><div id=toast></div><script>
-var pill=document.getElementById('pill'),pt=document.getElementById('pt'),logEl=document.getElementById('log'),toast=document.getElementById('toast'),updateLine=document.getElementById('updateLine'),tt,lastLog='',latest='',online=false,radioOk=true,updateAvail=false;
+var pill=document.getElementById('pill'),pt=document.getElementById('pt'),logEl=document.getElementById('log'),toast=document.getElementById('toast'),updateLine=document.getElementById('updateLine'),tt,lastLog='',latest='',online=false,radioOk=true,updateAvail=false,updating=false;
 function showToast(m){toast.textContent=m;toast.classList.add('show');clearTimeout(tt);tt=setTimeout(function(){toast.classList.remove('show')},1400)}
 function c(x,b){var lbl=b?b.textContent.trim():'';if(b){b.classList.add('sent');setTimeout(function(){b.classList.remove('sent')},450)}
 fetch('/'+x).then(function(r){return r.text()}).then(function(t){lastLog=t;logEl.innerHTML=t;setOnline(true);showToast((lbl||'Command')+' sent')}).catch(function(){showToast('failed')})}
-function renderPill(){pill.classList.toggle('on',online);pill.classList.toggle('update',online&&radioOk&&updateAvail);pill.classList.toggle('error',online&&!radioOk);pt.textContent=online?'v%FW_VERSION%':'offline'}
+function renderPill(){pill.classList.toggle('on',online||updating);pill.classList.toggle('update',online&&radioOk&&updateAvail);pill.classList.toggle('error',online&&!radioOk);pill.classList.toggle('updating',updating);pt.textContent=updating?'Updating…':(online?'v%FW_VERSION%':'offline')}
 function setOnline(ok){online=ok;renderPill()}
 function load(){fetch('/log').then(function(r){return r.text()}).then(function(t){if(t!==lastLog){lastLog=t;logEl.innerHTML=t}return fetch('/health')}).then(function(r){return r.text()}).then(function(t){radioOk=t.indexOf('radio=ok')>=0;setOnline(true)}).catch(function(){setOnline(false)})}
 load();setInterval(function(){if(!document.hidden)load()},1500);document.addEventListener('visibilitychange',function(){if(!document.hidden)load()});
@@ -220,9 +222,10 @@ function doUpd(){if(!latest){checkUpd();return}
 if(!confirm('Update to '+latest+'? The device will reboot.'))return;
 showToast('Updating… do not power off');
 fetch('/update',{method:'POST'}).then(pollBack).catch(pollBack)}
-function pollBack(){updateLine.textContent='Flashing… reconnecting (~1 min)';updateLine.classList.add('show');updateAvail=false;setOnline(false);
+function pollBack(){var dots=0;updating=true;updateAvail=false;online=false;updateLine.textContent='Flashing… reconnecting';updateLine.classList.add('show');renderPill();
 var t=setInterval(function(){fetch('/update/check').then(function(r){return r.json()}).then(function(d){
-if(d.cur===latest){clearInterval(t);updateLine.classList.remove('show');updateLine.innerHTML='';setOnline(true);showToast('Updated')}}).catch(function(){})},3000)}
+if(d.cur===latest){clearInterval(t);updateLine.textContent='Updated to v'+d.cur+' · reloading…';showToast('Updated');setTimeout(function(){location.reload()},900);return}
+dots=(dots+1)%4;updateLine.textContent='Flashing… reconnecting'+'.'.repeat(dots)}).catch(function(){dots=(dots+1)%4;updateLine.textContent='Flashing… reconnecting'+'.'.repeat(dots)})},3000)}
 checkUpd();
 </script></body></html>
 )HTML";

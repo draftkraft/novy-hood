@@ -39,6 +39,13 @@ class ProjectConfigurationTests(unittest.TestCase):
         self.assertNotIn("id=ver", hood)
         self.assertNotIn("location.host", hood)
 
+    def test_ota_update_shows_progress_and_reloads(self):
+        hood = read("src/hoodserver.cpp")
+        self.assertIn("Updating…", hood)
+        self.assertIn("Flashing… reconnecting", hood)
+        self.assertIn("location.reload()", hood)
+        self.assertIn("@keyframes pulse", hood)
+
     def test_activity_log_has_startup_update_and_radio_diagnostics(self):
         hood = read("src/hoodserver.cpp")
         self.assertIn('logMsg(String("BOOT: firmware v") + FW_VER);', hood)
