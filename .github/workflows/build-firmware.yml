@@ -1,0 +1,62 @@
+name: Build and test firmware
+
+# Builds the controller on every push to main and publishes the flashable binary
+# to a rolling "latest" release, so users always have the newest image at:
+#   https://github.com/draftkraft/novy-hood/releases/latest/download/novy-hood.factory.bin
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create/update the release on pushes to main
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Cache the PlatformIO toolchain/platform (arduino-esp32) to keep builds fast.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Run project tests
+        run: python tools/test_project.py
+
+      - name: Build (env hood)
+        run: pio run -e hood
+
+      - name: Stage release assets
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cp .pio/build/hood/firmware.factory.bin novy-hood.factory.bin   # full image (USB flash)
+          cp .pio/build/hood/firmware.bin         novy-hood.ota.bin        # app image (pull-OTA)
+          tr -d '\n' < VERSION > version.txt                               # must match baked FW_VERSION
+          {
+            printf 'Firmware version %s built from %s.\n\n' "$(cat VERSION)" "${GITHUB_SHA}"
+            printf 'First install (or after a partition change) must be the USB factory flash; later updates use the in-app Update button.\n\n'
+            printf 'USB flash with `esptool --chip esp32c3 write-flash 0x0 novy-hood.factory.bin`.\n'
+          } > release-notes.md
+
+      - name: Publish latest firmware
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest firmware
+          body_path: release-notes.md
+          files: |
+            novy-hood.factory.bin
+            novy-hood.ota.bin
+            version.txt

@@ -1,0 +1,15 @@
+# PlatformIO build output + local toolchain
+.pio/
+.platformio/
+.venv/
+
+# Compiled firmware images (published as release assets by CI, not committed)
+*.bin
+
+# macOS
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.claude/
+*.swp

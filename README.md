@@ -1,0 +1,90 @@
+# Novy Hood Controller
+
+[![Build and test firmware](https://github.com/draftkraft/novy-hood/actions/workflows/build-firmware.yml/badge.svg)](https://github.com/draftkraft/novy-hood/actions/workflows/build-firmware.yml)
+[![Latest firmware](https://img.shields.io/github/v/release/draftkraft/novy-hood?label=firmware)](https://github.com/draftkraft/novy-hood/releases/latest)
+
+Control a **Novy Pureline** (or compatible **433.92 MHz**) cooker hood over WiFi from your phone
+or computer — and optionally from **Home Assistant** — using a tiny **ESP32-C3 + CC1101** board.
+
+- 📱 **Clean web UI** (mobile + desktop, light/dark): Power, fan speed, Novy auto, Light
+- 📶 **No-recompile WiFi setup** — the device makes its own hotspot; you pick your network from a phone
+- 🏠 **MQTT + Home Assistant auto-discovery** (optional) — buttons appear automatically as entities
+- 🔁 **OTA updates** over WiFi after the first flash
+- 🔒 **No credentials baked in** — you configure WiFi at setup time
+
+## What you need
+
+- An ESP32-C3 board (e.g. "SuperMini") + a CC1101 433 MHz module wired per [the table below](#wiring)
+- A USB-C cable (a real **data** cable, not charge-only)
+
+## Flash it (≈3 lines)
+
+Download the latest firmware from **[Releases](../../releases/latest)**, then:
+
+```bash
+pip install esptool
+curl -LO https://github.com/draftkraft/novy-hood/releases/latest/download/novy-hood.factory.bin
+esptool --chip esp32c3 write-flash 0x0 novy-hood.factory.bin
+```
+
+> No Python? Open **[ESP Web Tools](https://esphome.github.io/esp-web-tools/)** in Chrome/Edge and
+> flash `novy-hood.factory.bin` with one click — no install needed.
+
+## First-time setup
+
+1. Power the board. It creates an open WiFi hotspot named **`novy-hood-setup`**.
+2. Join it from your phone — a setup page opens automatically (if not, visit `http://192.168.4.1`).
+3. Pick your WiFi network, enter the password, **Save**. The device reboots and joins your network.
+4. Open **`http://novy-hood.local`** (or the IP shown) to control the hood. The device sets its
+   WiFi hostname, mDNS name, and OTA hostname to **`novy-hood`**.
+
+To change networks later: open the web UI → **WiFi**, or hold the **BOOT** button while powering on
+to force the setup hotspot again.
+
+## Updating
+
+The web UI shows the running firmware version and checks GitHub for newer builds. When an update
+is available, click **Update** — the device downloads the latest release and reboots into it, no
+cable needed.
+
+> The **first** install must be the USB factory flash above — and after any change that alters the
+> partition layout, you must USB-flash `novy-hood.factory.bin` once more. Routine updates after
+> that are one click.
+
+## Home Assistant (optional)
+
+Web UI → **MQTT** → enter your broker, enable, save. The five buttons appear in Home Assistant
+automatically via MQTT discovery. (Leave MQTT off if you only use the web UI.)
+
+## Wiring
+
+All connections are **3.3 V** (the CC1101 is **not** 5 V tolerant):
+
+| CC1101 | ESP32-C3 | | CC1101 | ESP32-C3 |
+|--------|----------|-|--------|----------|
+| VCC    | 3V3      | | CSN    | GPIO7    |
+| GND    | GND      | | GDO0   | GPIO10   |
+| SCK    | GPIO4    | | MISO   | GPIO5    |
+| MOSI   | GPIO6    | | ANT    | coil antenna |
+
+## Build from source
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -U platformio esptool
+PLATFORMIO_CORE_DIR=.platformio .venv/bin/pio run -e hood            # build
+PLATFORMIO_CORE_DIR=.platformio .venv/bin/pio run -e hood -t upload  # build + flash over USB
+```
+
+## Versioning
+
+The firmware version lives in [`VERSION`](VERSION) and is baked into the web UI/update checks at
+build time. Local interactive builds ask to bump the patch version when firmware files changed but
+`VERSION` did not.
+
+```bash
+python tools/bump_version.py patch
+python tools/test_project.py
+```
+
+RF protocol and credits: based on [renedis/ESP32_Novy_Controller](https://github.com/renedis/ESP32_Novy_Controller).
