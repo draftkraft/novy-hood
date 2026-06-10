@@ -45,6 +45,7 @@ class ProjectConfigurationTests(unittest.TestCase):
         workflow = read(".github/workflows/build-firmware.yml")
         self.assertIn("python tools/test_project.py", workflow)
         self.assertIn("pio run -e hood", workflow)
+        self.assertIn("tag_name: v${{ env.FW_VERSION }}", workflow)
         self.assertIn("novy-hood.factory.bin", workflow)
         self.assertIn("novy-hood.ota.bin", workflow)
 

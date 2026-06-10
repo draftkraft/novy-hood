@@ -1,7 +1,7 @@
 name: Build and test firmware
 
-# Builds the controller on every push to main and publishes the flashable binary
-# to a rolling "latest" release, so users always have the newest image at:
+# Builds the controller on every push to main and publishes a versioned release.
+# GitHub resolves /releases/latest/download/... to the newest versioned release:
 #   https://github.com/draftkraft/novy-hood/releases/latest/download/novy-hood.factory.bin
 on:
   push:
@@ -43,6 +43,7 @@ jobs:
       - name: Stage release assets
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
+          echo "FW_VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
           cp .pio/build/hood/firmware.factory.bin novy-hood.factory.bin   # full image (USB flash)
           cp .pio/build/hood/firmware.bin         novy-hood.ota.bin        # app image (pull-OTA)
           tr -d '\n' < VERSION > version.txt                               # must match baked FW_VERSION
@@ -52,12 +53,12 @@ jobs:
             printf 'USB flash with `esptool --chip esp32c3 write-flash 0x0 novy-hood.factory.bin`.\n'
           } > release-notes.md
 
-      - name: Publish latest firmware
+      - name: Publish firmware release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Latest firmware
+          tag_name: v${{ env.FW_VERSION }}
+          name: Firmware v${{ env.FW_VERSION }}
           body_path: release-notes.md
           files: |
             novy-hood.factory.bin
