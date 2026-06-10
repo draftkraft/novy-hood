@@ -4,7 +4,7 @@
 [![Latest firmware](https://img.shields.io/github/v/release/draftkraft/novy-hood?label=firmware)](https://github.com/draftkraft/novy-hood/releases/latest)
 
 Control a **Novy Pureline** (or compatible **433.92 MHz**) cooker hood over WiFi from your phone
-or computer — and optionally from **Home Assistant** — using a tiny **ESP32-C3 + CC1101** board.
+or computer — and optionally via **MQTT** — using a tiny **ESP32-C3 + CC1101** board.
 
 - 📱 **Clean web UI** (mobile + desktop, light/dark): Power, fan speed, Novy auto, Light
 - 📶 **No-recompile WiFi setup** — the device makes its own hotspot; you pick your network from a phone
