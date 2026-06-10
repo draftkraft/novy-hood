@@ -328,7 +328,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(
 <label>Topic prefix</label><input name=prefix value="%PREFIX%" placeholder="novy-hood" autocomplete=off autocapitalize=off spellcheck=false>
 <button class="primary submit" type=submit>Save &amp; Reboot</button>
 </form>
-<p class=hint>Buttons auto-appear in Home Assistant via MQTT discovery. Leave password blank to keep the current one. Topics: <code>&lt;prefix&gt;/novy-hood/button/&lt;id&gt;/set</code>.</p>
+<p class=hint>Buttons auto-appear in Home Assistant via MQTT discovery. Leave password blank to keep the current one. Topics: <code>&lt;prefix&gt;/button/&lt;id&gt;/set</code>.</p>
 </div></div><script>
 function tog(){var p=document.getElementById('pass'),e=document.getElementById('eye');if(p.type==='password'){p.type='text';e.textContent='Hide'}else{p.type='password';e.textContent='Show'}}
 </script></body></html>
@@ -408,11 +408,27 @@ String wifiPageHtml() {
 }
 
 // ===================== MQTT (PubSubClient + Home Assistant discovery) =====================
-String mqttBase() { return mqttPrefix + "/" + HOSTNAME; }              // e.g. ESP/novy-hood
+String mqttBase() { return mqttPrefix; }                                // e.g. novy-hood
 String mqttStatusTopic() { return mqttBase() + "/status"; }
 String mqttCmdTopic(const char* id) { return mqttBase() + "/button/" + id + "/set"; }
 
-// Incoming command: topic = <prefix>/<hostname>/button/<id>/set -> fire the matching RF button.
+String mqttStateHint(int state) {
+  switch (state) {
+    case MQTT_CONNECT_BAD_PROTOCOL:    return "bad protocol";
+    case MQTT_CONNECT_BAD_CLIENT_ID:   return "bad client id";
+    case MQTT_CONNECT_UNAVAILABLE:     return "broker unavailable";
+    case MQTT_CONNECT_BAD_CREDENTIALS: return "bad credentials - check username/password";
+    case MQTT_CONNECT_UNAUTHORIZED:    return "unauthorized - check broker access";
+    case MQTT_CONNECTION_TIMEOUT:      return "connection timeout - broker did not answer";
+    case MQTT_CONNECTION_LOST:         return "connection lost - network dropped";
+    case MQTT_CONNECT_FAILED:          return "connect failed - broker refused the session";
+    case MQTT_DISCONNECTED:            return "disconnected";
+    case MQTT_CONNECTED:               return "connected";
+    default:                           return "unknown";
+  }
+}
+
+// Incoming command: topic = <prefix>/button/<id>/set -> fire the matching RF button.
 void mqttCallback(char* topic, byte* payload, unsigned int len) {
   String t(topic);
   for (int i = 0; i < MQTT_BTN_N; i++) {
@@ -456,8 +472,9 @@ bool mqttConnect() {
   bool ok = mqtt.connect(MQTT_CLIENT_ID, mqttUser.c_str(), mqttPass.c_str(),
                          st.c_str(), 0, true, "offline");
   if (!ok) {
-    Serial.printf("MQTT connect failed, state=%d\n", mqtt.state());
-    logMqttStatus("MQTT: connect failed (state=" + String(mqtt.state()) + ")");
+    int state = mqtt.state();
+    Serial.printf("MQTT connect failed, state=%d (%s)\n", state, mqttStateHint(state).c_str());
+    logMqttStatus("MQTT: connect failed (state=" + String(state) + ", " + mqttStateHint(state) + ")");
     return false;
   }
   mqtt.publish(st.c_str(), "online", true);       // retained availability
