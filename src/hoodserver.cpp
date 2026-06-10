@@ -197,7 +197,7 @@ var pill=document.getElementById('pill'),pt=document.getElementById('pt'),logEl=
 function showToast(m){toast.textContent=m;toast.classList.add('show');clearTimeout(tt);tt=setTimeout(function(){toast.classList.remove('show')},1400)}
 function c(x,b){var lbl=b?b.textContent.trim():'';if(b){b.classList.add('sent');setTimeout(function(){b.classList.remove('sent')},450)}
 fetch('/'+x).then(function(r){return r.text()}).then(function(t){lastLog=t;logEl.innerHTML=t;setOnline(true);showToast((lbl||'Command')+' sent')}).catch(function(){showToast('failed')})}
-function setOnline(ok){pill.classList.toggle('on',ok);pt.textContent=ok?('online · '+location.host):'offline'}
+function setOnline(ok){pill.classList.toggle('on',ok);pt.textContent=ok?('v%FW_VERSION%'):'offline'}
 function load(){fetch('/log').then(function(r){return r.text()}).then(function(t){if(t!==lastLog){lastLog=t;logEl.innerHTML=t}setOnline(true)}).catch(function(){setOnline(false)})}
 load();setInterval(function(){if(!document.hidden)load()},1500);document.addEventListener('visibilitychange',function(){if(!document.hidden)load()});
 var verEl=document.getElementById('ver'),updEl=document.getElementById('upd'),latest='';
@@ -507,6 +507,7 @@ void setup() {
   server.on("/", HTTP_GET, []() {
     String html = FPSTR(PAGE);
     html.replace("%LOG%", logHtml());
+    html.replace("%FW_VERSION%", FW_VER);
     server.send(200, "text/html", html);
   });
   server.on("/log", HTTP_GET, []() { server.send(200, "text/html", logHtml()); });

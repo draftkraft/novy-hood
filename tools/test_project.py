@@ -29,6 +29,12 @@ class ProjectConfigurationTests(unittest.TestCase):
         self.assertIn('const char* FW_UPDATE_REPO = "draftkraft/novy-hood";', config)
         self.assertNotIn('<OWNER>/<REPO>', read("README.md"))
 
+    def test_header_shows_version_not_ip(self):
+        hood = read("src/hoodserver.cpp")
+        self.assertIn("v%FW_VERSION%", hood)
+        self.assertIn('html.replace("%FW_VERSION%", FW_VER);', hood)
+        self.assertNotIn("location.host", hood)
+
     def test_platformio_hood_env_has_version_script(self):
         ini = read("platformio.ini")
         self.assertIn("[env:hood]", ini)
