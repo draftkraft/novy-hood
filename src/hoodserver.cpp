@@ -310,7 +310,7 @@ function tog(){var p=document.getElementById('pass'),e=document.getElementById('
 </script></body></html>
 )HTML";
 
-void initRadio() {
+bool initRadio() {
   ELECHOUSE_cc1101.setSpiPin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CSN);
   ELECHOUSE_cc1101.setGDO0(PIN_GDO0);
   ELECHOUSE_cc1101.Init();
@@ -322,6 +322,8 @@ void initRadio() {
   transmitter.enableTransmit(TRANSMIT_433MHZ_PIN);
   transmitter.setProtocol(12);         // renedis values
   transmitter.setPulseLength(350);
+  delay(25);
+  return ELECHOUSE_cc1101.getCC1101();
 }
 
 void logRadioMissing() {
@@ -331,8 +333,8 @@ void logRadioMissing() {
 void refreshRadioStatus() {
   bool ok = ELECHOUSE_cc1101.getCC1101();
   if (ok && !g_radioOk) {
-    initRadio();                                 // configure registers after a late reconnect
-    g_radioOk = ELECHOUSE_cc1101.getCC1101();
+    logMsg("CC1101: reconnecting");
+    g_radioOk = initRadio();                     // configure registers after a late reconnect
     logMsg(g_radioOk ? "CC1101: reconnected" : "ERROR: CC1101 reconnect failed");
   } else if (!ok && g_radioOk) {
     g_radioOk = false;
@@ -534,8 +536,7 @@ void setup() {
   }
 
   // Radio is brought up AFTER WiFi so the CC1101 is idle during association.
-  initRadio();
-  g_radioOk = ELECHOUSE_cc1101.getCC1101();
+  g_radioOk = initRadio();
   if (g_radioOk) {
     Serial.println("CC1101 OK");
     logMsg("CC1101: connected");
@@ -554,8 +555,12 @@ void setup() {
     html.replace("%FW_VERSION%", FW_VER);
     server.send(200, "text/html", html);
   });
-  server.on("/log", HTTP_GET, []() { server.send(200, "text/html", logHtml()); });
+  server.on("/log", HTTP_GET, []() {
+    refreshRadioStatus();
+    server.send(200, "text/html", logHtml());
+  });
   server.on("/health", HTTP_GET, []() {
+    refreshRadioStatus();
     server.send(200, "text/plain", g_radioOk ? "radio=ok" : "radio=error");
   });
   server.on("/reset", HTTP_GET, []() { server.send(200, "text/plain", "rebooting"); delay(300); ESP.restart(); });

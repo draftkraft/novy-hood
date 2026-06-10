@@ -52,10 +52,12 @@ class ProjectConfigurationTests(unittest.TestCase):
         self.assertIn('logMsg("WiFi: connecting to " + staSSID);', hood)
         self.assertIn('logMsg("CC1101: connected");', hood)
         self.assertIn("refreshRadioStatus()", hood)
+        self.assertIn('server.on("/log"', hood)
+        self.assertIn('server.on("/health"', hood)
         self.assertIn("CC1101: reconnected", hood)
+        self.assertIn("CC1101: reconnecting", hood)
         self.assertIn("blocked: CC1101 missing", hood)
         self.assertIn("ERROR: CC1101 not detected", hood)
-        self.assertIn('server.on("/health"', hood)
         self.assertIn('logMsg(String("UPDATE: v") + g_latestVersion + " available");', hood)
 
     def test_novy_button_label_is_short(self):
