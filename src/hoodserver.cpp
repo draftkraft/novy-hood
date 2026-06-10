@@ -109,11 +109,28 @@ void loadMqtt() {
   mqttPrefix  = prefs.getString("prefix", MQTT_PREFIX);
   prefs.end();
 }
+
+String normalizeMqttHost(String host) {
+  host.trim();
+  if (host.startsWith("http://")) host = host.substring(7);
+  else if (host.startsWith("https://")) host = host.substring(8);
+  int slash = host.indexOf('/');
+  if (slash >= 0) host = host.substring(0, slash);
+  int space = host.indexOf(' ');
+  if (space >= 0) host = host.substring(0, space);
+  host.trim();
+  return host;
+}
+
+uint16_t normalizeMqttPort(uint16_t port) {
+  return (port == 0) ? 1883 : port;
+}
+
 void saveMqtt(bool en, const String& host, uint16_t port, const String& user, const String& pass, const String& prefix) {
   prefs.begin("mqtt", false);
   prefs.putBool("en", en);
-  prefs.putString("host", host);
-  prefs.putUShort("port", port);
+  prefs.putString("host", normalizeMqttHost(host));
+  prefs.putUShort("port", normalizeMqttPort(port));
   prefs.putString("user", user);
   prefs.putString("pass", pass);
   prefs.putString("prefix", prefix);
@@ -428,6 +445,8 @@ void mqttPublishDiscovery() {
 }
 
 bool mqttConnect() {
+  mqttHost = normalizeMqttHost(mqttHost);
+  mqttPort = normalizeMqttPort(mqttPort);
   logMqttStatus("MQTT: connecting to " + mqttHost + ":" + String(mqttPort));
   mqtt.setServer(mqttHost.c_str(), mqttPort);
   mqtt.setBufferSize(1024);                       // discovery payloads exceed the 256B default
@@ -553,6 +572,8 @@ void setup() {
 
   loadCreds();
   loadMqtt();
+  mqttHost = normalizeMqttHost(mqttHost);
+  mqttPort = normalizeMqttPort(mqttPort);
   if (mqttEnabled) logMsg("MQTT: enabled " + mqttHost + ":" + String(mqttPort));
   else             logMsg("MQTT: disabled");
 
@@ -651,6 +672,9 @@ void setup() {
     String pass = server.hasArg("pass") && server.arg("pass").length() ? server.arg("pass") : mqttPass; // blank keeps current
     String prefix = server.arg("prefix"); if (prefix.length() == 0) prefix = "novy-hood";
     saveMqtt(en, host, port, user, pass, prefix);
+    mqttHost = normalizeMqttHost(host);
+    mqttPort = normalizeMqttPort(port);
+    if (host != mqttHost || port != mqttPort) logMsg("MQTT: normalized broker address");
     logMsg("MQTT settings saved -> rebooting");
     server.send(200, "text/html",
       "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
