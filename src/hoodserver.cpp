@@ -328,7 +328,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(
 <label>Topic prefix</label><input name=prefix value="%PREFIX%" placeholder="novy-hood" autocomplete=off autocapitalize=off spellcheck=false>
 <button class="primary submit" type=submit>Save &amp; Reboot</button>
 </form>
-<p class=hint>Buttons auto-appear in Home Assistant via MQTT discovery. Leave password blank to keep the current one. Topics: <code>&lt;prefix&gt;/button/&lt;id&gt;/set</code>. Presses on the physical remote's Light button are published to <code>&lt;prefix&gt;/remote/light</code>.</p>
+<p class=hint>Buttons auto-appear in Home Assistant via MQTT discovery. Leave password blank to keep the current one. Topics: <code>&lt;prefix&gt;/button/&lt;id&gt;/set</code>. Presses on the physical remote's Light button are published to <code>&lt;prefix&gt;/remote/light/get</code>.</p>
 </div></div><script>
 function tog(){var p=document.getElementById('pass'),e=document.getElementById('eye');if(p.type==='password'){p.type='text';e.textContent='Hide'}else{p.type='password';e.textContent='Show'}}
 </script></body></html>
@@ -431,6 +431,7 @@ String mqttBase() { return mqttPrefix; }                                // e.g. 
 String mqttStatusTopic() { return mqttBase() + "/status"; }
 String mqttCmdTopic(const char* id) { return mqttBase() + "/button/" + id + "/set"; }
 String mqttRemoteTopic(const char* id) { return mqttBase() + "/remote/" + id; }   // physical remote presses (outbound)
+String mqttRemoteGetTopic(const char* id) { return mqttRemoteTopic(id) + "/get"; }
 
 String mqttStateHint(int state) {
   switch (state) {
@@ -483,8 +484,8 @@ void mqttPublishDiscovery() {
     + "\"name\":\"Remote Light\","
     + "\"uniq_id\":\"" + HOSTNAME + "_remote_light\","
     + "\"icon\":\"mdi:remote\","
-    + "\"stat_t\":\"" + mqttRemoteTopic("light") + "\","
-    + "\"event_types\":[\"pressed\"],"
+    + "\"stat_t\":\"" + mqttRemoteGetTopic("light") + "\","
+    + "\"event_types\":[\"ready\",\"pressed\"],"
     + "\"val_tpl\":\"{\\\"event_type\\\":\\\"{{ value }}\\\"}\","
     + "\"avty_t\":\"" + avail + "\","
     + "\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","
@@ -494,10 +495,15 @@ void mqttPublishDiscovery() {
   logMsg("MQTT: HA discovery published");
 }
 
+void mqttPublishRemoteInitialState() {
+  if (!mqtt.connected()) return;
+  mqtt.publish(mqttRemoteGetTopic("light").c_str(), "ready", true);
+}
+
 // Publish a physical-remote press. Non-retained: each publish is one press event.
 void mqttPublishRemotePress(const char* id) {
   if (!mqtt.connected()) return;
-  mqtt.publish(mqttRemoteTopic(id).c_str(), "pressed");
+  mqtt.publish(mqttRemoteGetTopic(id).c_str(), "pressed");
 }
 
 bool mqttConnect() {
@@ -520,6 +526,7 @@ bool mqttConnect() {
   mqtt.publish(st.c_str(), "online", true);       // retained availability
   for (int i = 0; i < MQTT_BTN_N; i++) mqtt.subscribe(mqttCmdTopic(MQTT_BTNS[i].id).c_str());
   mqttPublishDiscovery();
+  mqttPublishRemoteInitialState();
   g_mqttOk = true;
   logMqttStatus("MQTT: connected " + mqttHost + ":" + String(mqttPort));
   return true;

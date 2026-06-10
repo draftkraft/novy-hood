@@ -61,9 +61,10 @@ Web UI → **MQTT** → enter your broker, enable, save. The five buttons appear
 automatically via MQTT discovery. (Leave MQTT off if you only use the web UI.)
 
 The device also **listens** for the physical remote: when its **Light** button is pressed nearby,
-the firmware logs it in the activity log and publishes `pressed` to `<prefix>/remote/light`
+the firmware logs it in the activity log and publishes `pressed` to `<prefix>/remote/light/get`
 (exposed in Home Assistant as a *Remote Light* event entity). Use it to keep other automations
-in sync with manual remote use.
+in sync with manual remote use. On MQTT connect it publishes retained `ready` to the same topic so
+the object exists before the first physical button press.
 
 ## Wiring
 
