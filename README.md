@@ -12,6 +12,10 @@ or computer — and optionally via **MQTT** — using a tiny **ESP32-C3 + CC1101
 - 🔁 **OTA updates** over WiFi after the first flash
 - 🔒 **No credentials baked in** — you configure WiFi at setup time
 
+<img width="594" height="527" alt="image" src="https://github.com/user-attachments/assets/3141e1d0-d6d7-4c3d-8203-c4e5b92369fa" />
+<img width="592" height="443" alt="image" src="https://github.com/user-attachments/assets/98f991fd-0662-4534-856e-2c78cc879be5" />
+<img width="583" height="631" alt="image" src="https://github.com/user-attachments/assets/8cdae0a5-f74e-488e-aa31-a01cfbd83999" />
+
 ## What you need
 
 - An ESP32-C3 board (e.g. "SuperMini") + a CC1101 433 MHz module wired per [the table below](#wiring)
