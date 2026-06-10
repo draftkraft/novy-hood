@@ -33,7 +33,20 @@ class ProjectConfigurationTests(unittest.TestCase):
         hood = read("src/hoodserver.cpp")
         self.assertIn("v%FW_VERSION%", hood)
         self.assertIn('html.replace("%FW_VERSION%", FW_VER);', hood)
+        self.assertIn("updateLine", hood)
+        self.assertIn(".pill.update", hood)
+        self.assertIn(".pill.error", hood)
+        self.assertNotIn("id=ver", hood)
         self.assertNotIn("location.host", hood)
+
+    def test_activity_log_has_startup_update_and_radio_diagnostics(self):
+        hood = read("src/hoodserver.cpp")
+        self.assertIn('logMsg(String("BOOT: firmware v") + FW_VER);', hood)
+        self.assertIn('logMsg("WiFi: connecting to " + staSSID);', hood)
+        self.assertIn('logMsg("CC1101: connected");', hood)
+        self.assertIn("ERROR: CC1101 not detected", hood)
+        self.assertIn('server.on("/health"', hood)
+        self.assertIn('logMsg(String("UPDATE: v") + g_latestVersion + " available");', hood)
 
     def test_platformio_hood_env_has_version_script(self):
         ini = read("platformio.ini")

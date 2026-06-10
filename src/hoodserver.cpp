@@ -59,6 +59,8 @@ const char* FW_VER = FW_VERSION;     // running version (compile-time, from VERS
 volatile bool g_doUpdate = false;    // set by POST /update, consumed in loop()
 String g_latestVersion;              // last value fetched from version.txt
 String g_updateError;                // human-readable last failure
+bool   g_updateLogged = false;       // avoid repeating "update available" on every poll
+bool   g_radioOk = false;            // CC1101 SPI presence check result
 
 const int LOG_N = 12;
 String logBuf[LOG_N];
@@ -117,6 +119,7 @@ bool connectSTA(uint32_t timeoutMs) {
   WiFi.setSleep(false);
   WiFi.setHostname(HOSTNAME.c_str());
   esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B);  // must stay: 11b-only PHY
+  logMsg("WiFi: connecting to " + staSSID);
   WiFi.begin(staSSID.c_str(), staPass.c_str());
   Serial.printf("Connecting to WiFi '%s' ...\n", staSSID.c_str());
   uint32_t t0 = millis();
@@ -138,8 +141,8 @@ void startPortal() {
 
 // Shared theme + base styles for both pages (inline; no external assets — works offline).
 #define NOVY_CSS \
-":root{--bg:#f5f6f8;--card:#fff;--fg:#1a1a1c;--muted:#6b7280;--line:#e5e7eb;--accent:#007aff;--ap:#0051d5;--ok:#1db954;--sh:0 1px 3px rgba(0,0,0,.08),0 6px 22px rgba(0,0,0,.06)}" \
-"@media(prefers-color-scheme:dark){:root{--bg:#0b0c10;--card:#16181d;--fg:#f0f1f3;--muted:#9aa0aa;--line:#262a31;--accent:#0a84ff;--ap:#409cff;--ok:#30d158;--sh:0 1px 2px rgba(0,0,0,.4)}}" \
+":root{--bg:#f5f6f8;--card:#fff;--fg:#1a1a1c;--muted:#6b7280;--line:#e5e7eb;--accent:#007aff;--ap:#0051d5;--ok:#1db954;--warn:#ff9500;--sh:0 1px 3px rgba(0,0,0,.08),0 6px 22px rgba(0,0,0,.06)}" \
+"@media(prefers-color-scheme:dark){:root{--bg:#0b0c10;--card:#16181d;--fg:#f0f1f3;--muted:#9aa0aa;--line:#262a31;--accent:#0a84ff;--ap:#409cff;--ok:#30d158;--warn:#ff9f0a;--sh:0 1px 2px rgba(0,0,0,.4)}}" \
 "*{box-sizing:border-box}" \
 "body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(28px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}" \
 ".wrap{max-width:560px;margin:0 auto}" \
@@ -148,6 +151,10 @@ void startPortal() {
 ".pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);background:var(--card);border:1px solid var(--line);padding:6px 10px;border-radius:999px;white-space:nowrap}" \
 ".dot{width:8px;height:8px;border-radius:50%;background:var(--muted);transition:background .3s}" \
 ".pill.on .dot{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}" \
+".pill.update{color:#fff;background:var(--warn);border-color:var(--warn)}" \
+".pill.update .dot{background:#fff;box-shadow:0 0 0 3px color-mix(in srgb,#fff 35%,transparent)}" \
+".pill.error{color:#fff;background:#d70015;border-color:#d70015}" \
+".pill.error .dot{background:#fff;box-shadow:0 0 0 3px color-mix(in srgb,#fff 35%,transparent)}" \
 ".card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin:0 0 14px;box-shadow:var(--sh)}" \
 ".card h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:2px 2px 12px;font-weight:700}" \
 ".grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}" \
@@ -175,10 +182,13 @@ details.log summary::before{content:"\25B8  "}details.log[open] summary::before{
 #log{margin-top:8px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;color:var(--muted);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
 footer{display:flex;gap:18px;justify-content:center;margin-top:18px}
 footer a{color:var(--muted);font-size:13px;text-decoration:none;font-weight:600}footer a:hover{color:var(--accent)}
+.updateLine{display:none;margin:-8px 2px 14px;text-align:right;font-size:13px;font-weight:600}
+.updateLine.show{display:block}.updateLine a{color:var(--warn);text-decoration:none}.updateLine a:hover{text-decoration:underline}
 #toast{position:fixed;left:50%;bottom:calc(26px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);background:#000;color:#fff;padding:10px 16px;border-radius:12px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:20}
 #toast.show{opacity:.92;transform:translateX(-50%) translateY(0)}
 </style></head><body><div class=wrap>
 <header><h1>Novy Hood</h1><span class=pill id=pill><span class=dot></span><span id=pt>connecting</span></span></header>
+<div id=updateLine class=updateLine></div>
 <div class=card><h2>Fan</h2><div class=grid>
 <button class="primary span" onclick="c('togglePower',this)" aria-label=Power><svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round><path d="M12 3v9"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></svg>Power</button>
 <div class="seg span">
@@ -190,31 +200,29 @@ footer a{color:var(--muted);font-size:13px;text-decoration:none;font-weight:600}
 <button class=span onclick="c('toggleLight',this)" aria-label=Light><svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.2V16h6v-.3c0-.8.4-1.6 1-2.2A6 6 0 0 0 12 3Z"/></svg>Light</button>
 </div></div>
 <details class=log><summary>Activity log</summary><div id=log>%LOG%</div></details>
-<footer><a href=/wifi>WiFi</a><a href=/mqtt>MQTT</a><a href=# id=upd style=display:none onclick="doUpd();return false">Update</a><a href=# onclick="if(confirm('Reboot the device?'))fetch('/reset');return false">Reboot</a></footer>
-<div id=ver style="text-align:center;color:var(--muted);font-size:12px;margin-top:10px">&nbsp;</div>
+<footer><a href=/wifi>WiFi</a><a href=/mqtt>MQTT</a><a href=# onclick="if(confirm('Reboot the device?'))fetch('/reset');return false">Reboot</a></footer>
 </div><div id=toast></div><script>
-var pill=document.getElementById('pill'),pt=document.getElementById('pt'),logEl=document.getElementById('log'),toast=document.getElementById('toast'),tt,lastLog='';
+var pill=document.getElementById('pill'),pt=document.getElementById('pt'),logEl=document.getElementById('log'),toast=document.getElementById('toast'),updateLine=document.getElementById('updateLine'),tt,lastLog='',latest='',online=false,radioOk=true,updateAvail=false;
 function showToast(m){toast.textContent=m;toast.classList.add('show');clearTimeout(tt);tt=setTimeout(function(){toast.classList.remove('show')},1400)}
 function c(x,b){var lbl=b?b.textContent.trim():'';if(b){b.classList.add('sent');setTimeout(function(){b.classList.remove('sent')},450)}
 fetch('/'+x).then(function(r){return r.text()}).then(function(t){lastLog=t;logEl.innerHTML=t;setOnline(true);showToast((lbl||'Command')+' sent')}).catch(function(){showToast('failed')})}
-function setOnline(ok){pill.classList.toggle('on',ok);pt.textContent=ok?('v%FW_VERSION%'):'offline'}
-function load(){fetch('/log').then(function(r){return r.text()}).then(function(t){if(t!==lastLog){lastLog=t;logEl.innerHTML=t}setOnline(true)}).catch(function(){setOnline(false)})}
+function renderPill(){pill.classList.toggle('on',online);pill.classList.toggle('update',online&&radioOk&&updateAvail);pill.classList.toggle('error',online&&!radioOk);pt.textContent=online?'v%FW_VERSION%':'offline'}
+function setOnline(ok){online=ok;renderPill()}
+function load(){fetch('/log').then(function(r){return r.text()}).then(function(t){if(t!==lastLog){lastLog=t;logEl.innerHTML=t}return fetch('/health')}).then(function(r){return r.text()}).then(function(t){radioOk=t.indexOf('radio=ok')>=0;setOnline(true)}).catch(function(){setOnline(false)})}
 load();setInterval(function(){if(!document.hidden)load()},1500);document.addEventListener('visibilitychange',function(){if(!document.hidden)load()});
-var verEl=document.getElementById('ver'),updEl=document.getElementById('upd'),latest='';
 function checkUpd(){fetch('/update/check').then(function(r){return r.json()}).then(function(d){
-if(!d.enabled){verEl.textContent='v'+d.cur;updEl.style.display='none';return}
+if(!d.enabled){updateAvail=false;renderPill();updateLine.classList.remove('show');updateLine.innerHTML='';return}
 latest=d.latest;
-if(d.avail){verEl.innerHTML='v'+d.cur+' → update to '+d.latest;updEl.textContent='Update now';updEl.style.display='';updEl.style.color='var(--accent)'}
-else if(d.err){verEl.textContent='v'+d.cur+' (check failed: '+d.err+')';updEl.style.display='none'}
-else{verEl.textContent='v'+d.cur+' · up to date';updEl.style.display='none'}
-}).catch(function(){verEl.textContent='version check failed'})}
+if(d.avail){updateAvail=true;renderPill();updateLine.innerHTML='<a href=# onclick="doUpd();return false">Update to v'+d.latest+'</a>';updateLine.classList.add('show')}
+else{updateAvail=false;renderPill();updateLine.classList.remove('show');updateLine.innerHTML=''}
+}).catch(function(){updateAvail=false;renderPill();updateLine.classList.remove('show')})}
 function doUpd(){if(!latest){checkUpd();return}
 if(!confirm('Update to '+latest+'? The device will reboot.'))return;
 showToast('Updating… do not power off');
 fetch('/update',{method:'POST'}).then(pollBack).catch(pollBack)}
-function pollBack(){verEl.textContent='Flashing… reconnecting (~1 min)';updEl.style.display='none';setOnline(false);
+function pollBack(){updateLine.textContent='Flashing… reconnecting (~1 min)';updateLine.classList.add('show');updateAvail=false;setOnline(false);
 var t=setInterval(function(){fetch('/update/check').then(function(r){return r.json()}).then(function(d){
-if(d.cur===latest){clearInterval(t);verEl.textContent='Updated to v'+d.cur;setOnline(true);showToast('Updated')}}).catch(function(){})},3000)}
+if(d.cur===latest){clearInterval(t);updateLine.classList.remove('show');updateLine.innerHTML='';setOnline(true);showToast('Updated')}}).catch(function(){})},3000)}
 checkUpd();
 </script></body></html>
 )HTML";
@@ -464,6 +472,7 @@ void setup() {
   Serial.begin(115200);
   delay(800);
   Serial.println("\n=== Novy hood WiFi controller ===");
+  logMsg(String("BOOT: firmware v") + FW_VER);
 
   // Hold the BOOT button (GPIO9) during reset to force the setup portal even when
   // valid credentials are saved — the recovery path for a stranded headless device.
@@ -480,25 +489,35 @@ void setup() {
   loadMqtt();
 
   bool connected = false;
-  if (forcePortal)               Serial.println("BOOT held -> forcing setup portal");
-  else if (staSSID.length() == 0) Serial.println("No saved WiFi -> setup portal");
+  if (forcePortal)               { Serial.println("BOOT held -> forcing setup portal"); logMsg("BOOT: setup portal forced"); }
+  else if (staSSID.length() == 0) { Serial.println("No saved WiFi -> setup portal"); logMsg("WiFi: no saved network"); }
   else                            connected = connectSTA(20000);
 
   if (connected) {
     Serial.print("WiFi connected. IP ADDRESS: ");
     Serial.println(WiFi.localIP());
+    logMsg("WiFi: connected");
     logMsg("IP: " + WiFi.localIP().toString());
     if (MDNS.begin(HOSTNAME.c_str()))
-      Serial.printf("mDNS: http://%s.local\n", HOSTNAME.c_str());
+      { Serial.printf("mDNS: http://%s.local\n", HOSTNAME.c_str()); logMsg(String("mDNS: http://") + HOSTNAME + ".local"); }
   } else {
-    if (!forcePortal && staSSID.length())
+    if (!forcePortal && staSSID.length()) {
       Serial.printf("!! WiFi '%s' failed -> starting setup portal\n", staSSID.c_str());
+      logMsg("WiFi: connection failed");
+    }
     startPortal();
   }
 
   // Radio is brought up AFTER WiFi so the CC1101 is idle during association.
   initRadio();
-  Serial.println(ELECHOUSE_cc1101.getCC1101() ? "CC1101 OK" : "!! CC1101 NOT detected");
+  g_radioOk = ELECHOUSE_cc1101.getCC1101();
+  if (g_radioOk) {
+    Serial.println("CC1101 OK");
+    logMsg("CC1101: connected");
+  } else {
+    Serial.println("!! CC1101 NOT detected");
+    logMsg("ERROR: CC1101 not detected - check 3.3V and GPIO4/5/6/7/10");
+  }
 
   ArduinoOTA.setHostname(HOSTNAME.c_str());
   ArduinoOTA.setPassword(OTAPASSWORD.c_str());
@@ -511,6 +530,9 @@ void setup() {
     server.send(200, "text/html", html);
   });
   server.on("/log", HTTP_GET, []() { server.send(200, "text/html", logHtml()); });
+  server.on("/health", HTTP_GET, []() {
+    server.send(200, "text/plain", g_radioOk ? "radio=ok" : "radio=error");
+  });
   server.on("/reset", HTTP_GET, []() { server.send(200, "text/plain", "rebooting"); delay(300); ESP.restart(); });
   route("/togglePower", CMD_POWER, "Power");
   route("/togglePlus",  CMD_PLUS,  "Faster");
@@ -588,6 +610,12 @@ void setup() {
     g_latestVersion = fetchLatestVersion();              // blocking ≤8s (like /scan)
     bool enabled = strlen(FW_UPDATE_REPO) > 0;
     bool avail   = enabled && g_latestVersion.length() && g_latestVersion != String(FW_VER);
+    if (avail && !g_updateLogged) {
+      logMsg(String("UPDATE: v") + g_latestVersion + " available");
+      g_updateLogged = true;
+    } else if (!avail) {
+      g_updateLogged = false;
+    }
     String j = String("{\"cur\":\"") + FW_VER + "\",\"latest\":\"" + g_latestVersion +
                "\",\"enabled\":" + (enabled ? "true" : "false") +
                ",\"avail\":" + (avail ? "true" : "false") +
