@@ -58,14 +58,22 @@ automatically via MQTT discovery. (Leave MQTT off if you only use the web UI.)
 
 ## Wiring
 
-All connections are **3.3 V** (the CC1101 is **not** 5 V tolerant):
+All connections are **3.3 V** (the CC1101 is **not** 5 V tolerant). Use the labels printed on
+your boards; the table below matches the common 8-pin CC1101 module and the ESP32-C3 SuperMini
+style pin labels:
 
-| CC1101 | ESP32-C3 | | CC1101 | ESP32-C3 |
-|--------|----------|-|--------|----------|
-| VCC    | 3V3      | | CSN    | GPIO7    |
-| GND    | GND      | | GDO0   | GPIO10   |
-| SCK    | GPIO4    | | MISO   | GPIO5    |
-| MOSI   | GPIO6    | | ANT    | coil antenna |
+| CC1101 pin | CC1101 label | ESP32-C3 board label |
+|------------|--------------|----------------------|
+| 1          | GND          | GND / GD             |
+| 2          | VCC          | 3.3V                 |
+| 3          | GDO0         | 10                   |
+| 4          | CSN / CS     | 7                    |
+| 5          | SCK          | 4                    |
+| 6          | MOSI / SI    | 6                    |
+| 7          | MISO / SO    | 5                    |
+| 8          | GDO2         | not connected        |
+
+Do not connect the CC1101 to `5V`. Connect the antenna pad to a 433 MHz antenna.
 
 ## Build from source
 
