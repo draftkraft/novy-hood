@@ -49,7 +49,7 @@ const MqttBtn MQTT_BTNS[] = {
   { "power", "Power",       CMD_POWER, "mdi:power" },
   { "plus",  "Faster",      CMD_PLUS,  "mdi:fan-plus" },
   { "minus", "Slower",      CMD_MINUS, "mdi:fan-minus" },
-  { "novy",  "Novy (auto)", CMD_NOVY,  "mdi:fan-auto" },
+  { "novy",  "Novy",        CMD_NOVY,  "mdi:fan-auto" },
   { "light", "Light",       CMD_LIGHT, "mdi:lightbulb" },
 };
 const int MQTT_BTN_N = sizeof(MQTT_BTNS) / sizeof(MQTT_BTNS[0]);
@@ -196,7 +196,7 @@ footer a{color:var(--muted);font-size:13px;text-decoration:none;font-weight:600}
 <div class="seg span">
 <button onclick="c('toggleMinus',this)" aria-label="Speed down"><svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round><path d="M5 12h14"/></svg>Slower</button>
 <button onclick="c('togglePlus',this)" aria-label="Speed up"><svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round><path d="M12 5v14M5 12h14"/></svg>Faster</button></div>
-<button class=span onclick="c('toggleNovy',this)" aria-label="Novy auto mode">Novy (auto)</button>
+<button class=span onclick="c('toggleNovy',this)" aria-label=Novy>Novy</button>
 </div></div>
 <div class=card><h2>Light</h2><div class=grid>
 <button class=span onclick="c('toggleLight',this)" aria-label=Light><svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.2V16h6v-.3c0-.8.4-1.6 1-2.2A6 6 0 0 0 12 3Z"/></svg>Light</button>
@@ -324,7 +324,29 @@ void initRadio() {
   transmitter.setPulseLength(350);
 }
 
+void logRadioMissing() {
+  logMsg("ERROR: CC1101 not detected - check 3.3V and GPIO4/5/6/7/10");
+}
+
+void refreshRadioStatus() {
+  bool ok = ELECHOUSE_cc1101.getCC1101();
+  if (ok && !g_radioOk) {
+    initRadio();                                 // configure registers after a late reconnect
+    g_radioOk = ELECHOUSE_cc1101.getCC1101();
+    logMsg(g_radioOk ? "CC1101: reconnected" : "ERROR: CC1101 reconnect failed");
+  } else if (!ok && g_radioOk) {
+    g_radioOk = false;
+    logRadioMissing();
+  }
+}
+
 void sendRFCommand(ButtonCommand cmd, const char* label, int channelIndex = 0) {
+  refreshRadioStatus();
+  if (!g_radioOk) {
+    logMsg(String(label) + " blocked: CC1101 missing");
+    return;
+  }
+
   ELECHOUSE_cc1101.SetTx();
   transmitter.enableTransmit(TRANSMIT_433MHZ_PIN);
   transmitter.setProtocol(12);
@@ -519,7 +541,7 @@ void setup() {
     logMsg("CC1101: connected");
   } else {
     Serial.println("!! CC1101 NOT detected");
-    logMsg("ERROR: CC1101 not detected - check 3.3V and GPIO4/5/6/7/10");
+    logRadioMissing();
   }
 
   ArduinoOTA.setHostname(HOSTNAME.c_str());
@@ -540,7 +562,7 @@ void setup() {
   route("/togglePower", CMD_POWER, "Power");
   route("/togglePlus",  CMD_PLUS,  "Faster");
   route("/toggleMinus", CMD_MINUS, "Slower");
-  route("/toggleNovy",  CMD_NOVY,  "Novy (auto)");
+  route("/toggleNovy",  CMD_NOVY,  "Novy");
   route("/toggleLight", CMD_LIGHT, "Light");
 
   // ---- WiFi provisioning endpoints ----
@@ -649,6 +671,12 @@ void loop() {
   if (portalActive) dnsServer.processNextRequest();
   server.handleClient();
   mqttLoop();
+
+  static unsigned long lastRadioCheck = 0;
+  if (millis() - lastRadioCheck >= 5000) {
+    lastRadioCheck = millis();
+    refreshRadioStatus();
+  }
 
   // Race-free status heartbeat: prints WiFi state + IP every 3s.
   static unsigned long last = 0;

@@ -51,9 +51,18 @@ class ProjectConfigurationTests(unittest.TestCase):
         self.assertIn('logMsg(String("BOOT: firmware v") + FW_VER);', hood)
         self.assertIn('logMsg("WiFi: connecting to " + staSSID);', hood)
         self.assertIn('logMsg("CC1101: connected");', hood)
+        self.assertIn("refreshRadioStatus()", hood)
+        self.assertIn("CC1101: reconnected", hood)
+        self.assertIn("blocked: CC1101 missing", hood)
         self.assertIn("ERROR: CC1101 not detected", hood)
         self.assertIn('server.on("/health"', hood)
         self.assertIn('logMsg(String("UPDATE: v") + g_latestVersion + " available");', hood)
+
+    def test_novy_button_label_is_short(self):
+        hood = read("src/hoodserver.cpp")
+        self.assertIn('>Novy</button>', hood)
+        self.assertIn('route("/toggleNovy",  CMD_NOVY,  "Novy");', hood)
+        self.assertNotIn("Novy (auto)", hood)
 
     def test_platformio_hood_env_has_version_script(self):
         ini = read("platformio.ini")
