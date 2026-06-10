@@ -46,6 +46,7 @@ class ProjectConfigurationTests(unittest.TestCase):
         self.assertIn("python tools/test_project.py", workflow)
         self.assertIn("pio run -e hood", workflow)
         self.assertIn("tag_name: v${{ env.FW_VERSION }}", workflow)
+        self.assertIn("RELEASE_EXISTS", workflow)
         self.assertIn("novy-hood.factory.bin", workflow)
         self.assertIn("novy-hood.ota.bin", workflow)
 

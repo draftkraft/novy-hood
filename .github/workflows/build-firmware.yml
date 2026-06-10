@@ -53,8 +53,19 @@ jobs:
             printf 'USB flash with `esptool --chip esp32c3 write-flash 0x0 novy-hood.factory.bin`.\n'
           } > release-notes.md
 
-      - name: Publish firmware release
+      - name: Check release version
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${FW_VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "RELEASE_EXISTS=true" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_EXISTS=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Publish firmware release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.RELEASE_EXISTS != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.FW_VERSION }}
