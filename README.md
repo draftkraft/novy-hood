@@ -60,6 +60,11 @@ cable needed.
 Web UI → **MQTT** → enter your broker, enable, save. The five buttons appear in Home Assistant
 automatically via MQTT discovery. (Leave MQTT off if you only use the web UI.)
 
+The device also **listens** for the physical remote: when its **Light** button is pressed nearby,
+the firmware logs it in the activity log and publishes `pressed` to `<prefix>/remote/light`
+(exposed in Home Assistant as a *Remote Light* event entity). Use it to keep other automations
+in sync with manual remote use.
+
 ## Wiring
 
 All connections are **3.3 V** (the CC1101 is **not** 5 V tolerant). Use the labels printed on

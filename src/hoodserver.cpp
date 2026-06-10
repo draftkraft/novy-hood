@@ -328,13 +328,31 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(
 <label>Topic prefix</label><input name=prefix value="%PREFIX%" placeholder="novy-hood" autocomplete=off autocapitalize=off spellcheck=false>
 <button class="primary submit" type=submit>Save &amp; Reboot</button>
 </form>
-<p class=hint>Buttons auto-appear in Home Assistant via MQTT discovery. Leave password blank to keep the current one. Topics: <code>&lt;prefix&gt;/button/&lt;id&gt;/set</code>.</p>
+<p class=hint>Buttons auto-appear in Home Assistant via MQTT discovery. Leave password blank to keep the current one. Topics: <code>&lt;prefix&gt;/button/&lt;id&gt;/set</code>. Presses on the physical remote's Light button are published to <code>&lt;prefix&gt;/remote/light</code>.</p>
 </div></div><script>
 function tog(){var p=document.getElementById('pass'),e=document.getElementById('eye');if(p.type==='password'){p.type='text';e.textContent='Hide'}else{p.type='password';e.textContent='Show'}}
 </script></body></html>
 )HTML";
 
+// ---- RF receive: idle in RX so presses on the physical Novy remote are decoded ----
+// GDO0 is shared: the CC1101 drives it in RX (demodulated OOK), we drive it in TX.
+bool rxListening = false;
+
+void radioEnterRx() {
+  pinMode(PIN_GDO0, INPUT);              // stop driving GDO0 before the CC1101 does
+  ELECHOUSE_cc1101.SetRx();
+  transmitter.enableReceive(PIN_GDO0);   // GPIO number == interrupt source on ESP32
+  rxListening = true;
+}
+
+void rxStop() {
+  if (!rxListening) return;
+  transmitter.disableReceive();
+  rxListening = false;
+}
+
 bool initRadio() {
+  rxStop();                            // re-init may be called with the ISR attached
   ELECHOUSE_cc1101.setSpiPin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CSN);
   ELECHOUSE_cc1101.setGDO0(PIN_GDO0);
   ELECHOUSE_cc1101.Init();
@@ -342,10 +360,9 @@ bool initRadio() {
   ELECHOUSE_cc1101.setModulation(2);   // ASK/OOK
   ELECHOUSE_cc1101.setMHZ(433.92);
   ELECHOUSE_cc1101.setPA(12);
-  ELECHOUSE_cc1101.SetTx();
-  transmitter.enableTransmit(TRANSMIT_433MHZ_PIN);
   transmitter.setProtocol(12);         // renedis values
   transmitter.setPulseLength(350);
+  radioEnterRx();                      // idle listening for the physical remote
   delay(25);
   return ELECHOUSE_cc1101.getCC1101();
 }
@@ -373,6 +390,7 @@ void sendRFCommand(ButtonCommand cmd, const char* label, int channelIndex = 0) {
     return;
   }
 
+  rxStop();                            // we drive GDO0 now; don't decode our own TX
   ELECHOUSE_cc1101.SetTx();
   transmitter.enableTransmit(TRANSMIT_433MHZ_PIN);
   transmitter.setProtocol(12);
@@ -390,6 +408,7 @@ void sendRFCommand(ButtonCommand cmd, const char* label, int channelIndex = 0) {
 
   String rfCode = NOVY_DEVICE_CODE[channelIndex] + NOVY_PREFIX + command;
   for (int i = 0; i < repeatCount; i++) { transmitter.send(rfCode.c_str()); delay(50); }
+  radioEnterRx();                      // back to listening for the remote
   logMsg(String(label) + " → RF " + rfCode + " ×" + repeatCount);
 }
 
@@ -411,6 +430,7 @@ String wifiPageHtml() {
 String mqttBase() { return mqttPrefix; }                                // e.g. novy-hood
 String mqttStatusTopic() { return mqttBase() + "/status"; }
 String mqttCmdTopic(const char* id) { return mqttBase() + "/button/" + id + "/set"; }
+String mqttRemoteTopic(const char* id) { return mqttBase() + "/remote/" + id; }   // physical remote presses (outbound)
 
 String mqttStateHint(int state) {
   switch (state) {
@@ -457,7 +477,27 @@ void mqttPublishDiscovery() {
       + "}";
     mqtt.publish(topic.c_str(), (const uint8_t*)payload.c_str(), payload.length(), true);
   }
+  // Event entity: fires in HA whenever the physical remote's Light button is heard.
+  String etopic = String("homeassistant/event/") + HOSTNAME + "/remote_light/config";
+  String epay = String("{")
+    + "\"name\":\"Remote Light\","
+    + "\"uniq_id\":\"" + HOSTNAME + "_remote_light\","
+    + "\"icon\":\"mdi:remote\","
+    + "\"stat_t\":\"" + mqttRemoteTopic("light") + "\","
+    + "\"event_types\":[\"pressed\"],"
+    + "\"val_tpl\":\"{\\\"event_type\\\":\\\"{{ value }}\\\"}\","
+    + "\"avty_t\":\"" + avail + "\","
+    + "\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","
+    + "\"dev\":{\"ids\":[\"" + HOSTNAME + "\"]}"
+    + "}";
+  mqtt.publish(etopic.c_str(), (const uint8_t*)epay.c_str(), epay.length(), true);
   logMsg("MQTT: HA discovery published");
+}
+
+// Publish a physical-remote press. Non-retained: each publish is one press event.
+void mqttPublishRemotePress(const char* id) {
+  if (!mqtt.connected()) return;
+  mqtt.publish(mqttRemoteTopic(id).c_str(), "pressed");
 }
 
 bool mqttConnect() {
@@ -519,6 +559,28 @@ void mqttLoop() {
   if (millis() - lastTry < 5000) return;
   lastTry = millis();
   mqttConnect();
+}
+
+// ===================== RF receive: physical remote presses =====================
+// The remote repeats its frame many times per press; collapse a burst into one event.
+void rfRxLoop() {
+  if (!transmitter.available()) return;
+  unsigned long value = transmitter.getReceivedValue();
+  unsigned int  bits  = transmitter.getReceivedBitlength();
+  transmitter.resetAvailable();
+
+  // LIGHT frame = <device code(4)><prefix(4)><light cmd(10)>. Match on the low
+  // 14 bits (prefix+command) so any remote channel pairing is recognized.
+  static const uint32_t LIGHT_SUFFIX = strtoul((NOVY_PREFIX + NOVY_COMMAND_LIGHT).c_str(), nullptr, 2);
+  if (bits != 18 || (value & 0x3FFF) != LIGHT_SUFFIX) return;
+
+  static unsigned long lastSeen = 0;
+  bool repeatBurst = lastSeen && (millis() - lastSeen < 1200);
+  lastSeen = millis();
+  if (repeatBurst) return;
+
+  logMsg("Remote: Light pressed (RF " + String(value) + ")");
+  mqttPublishRemotePress("light");
 }
 
 // ===================== Pull-OTA self-update from GitHub release =====================
@@ -758,6 +820,7 @@ void loop() {
   if (portalActive) dnsServer.processNextRequest();
   server.handleClient();
   mqttLoop();
+  rfRxLoop();
 
   static unsigned long lastRadioCheck = 0;
   if (millis() - lastRadioCheck >= 5000) {
