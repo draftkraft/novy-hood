@@ -61,6 +61,8 @@ String g_latestVersion;              // last value fetched from version.txt
 String g_updateError;                // human-readable last failure
 bool   g_updateLogged = false;       // avoid repeating "update available" on every poll
 bool   g_radioOk = false;            // CC1101 SPI presence check result
+bool   g_mqttOk = false;             // MQTT broker connection state
+String g_mqttStatus;                 // last MQTT status message written to the activity log
 
 const int LOG_N = 12;
 String logBuf[LOG_N];
@@ -70,6 +72,11 @@ String logHtml() {
   String s;
   for (int i = 0; i < LOG_N; i++) { String l = logBuf[(logIdx + i) % LOG_N]; if (l.length()) s += l + "<br>"; }
   return s;
+}
+void logMqttStatus(const String& m) {
+  if (g_mqttStatus == m) return;
+  g_mqttStatus = m;
+  logMsg(m);
 }
 
 // ---- WiFi credential storage (NVS namespace "wifi") ----
@@ -421,6 +428,7 @@ void mqttPublishDiscovery() {
 }
 
 bool mqttConnect() {
+  logMqttStatus("MQTT: connecting to " + mqttHost + ":" + String(mqttPort));
   mqtt.setServer(mqttHost.c_str(), mqttPort);
   mqtt.setBufferSize(1024);                       // discovery payloads exceed the 256B default
   mqtt.setCallback(mqttCallback);
@@ -428,18 +436,49 @@ bool mqttConnect() {
   // Connect with Last-Will = retained "offline" so HA marks it unavailable on disconnect.
   bool ok = mqtt.connect(MQTT_CLIENT_ID, mqttUser.c_str(), mqttPass.c_str(),
                          st.c_str(), 0, true, "offline");
-  if (!ok) { Serial.printf("MQTT connect failed, state=%d\n", mqtt.state()); return false; }
+  if (!ok) {
+    Serial.printf("MQTT connect failed, state=%d\n", mqtt.state());
+    logMqttStatus("MQTT: connect failed (state=" + String(mqtt.state()) + ")");
+    return false;
+  }
   mqtt.publish(st.c_str(), "online", true);       // retained availability
   for (int i = 0; i < MQTT_BTN_N; i++) mqtt.subscribe(mqttCmdTopic(MQTT_BTNS[i].id).c_str());
   mqttPublishDiscovery();
-  logMsg("MQTT connected: " + mqttHost + ":" + mqttPort);
+  g_mqttOk = true;
+  logMqttStatus("MQTT: connected " + mqttHost + ":" + String(mqttPort));
   return true;
 }
 
 // Non-blocking: service MQTT, retry connection every 5s. Only when WiFi-STA up & not in portal.
 void mqttLoop() {
-  if (!mqttEnabled || portalActive || WiFi.status() != WL_CONNECTED || mqttHost.length() == 0) return;
-  if (mqtt.connected()) { mqtt.loop(); return; }
+  if (!mqttEnabled) {
+    if (g_mqttOk) { g_mqttOk = false; logMqttStatus("MQTT: disabled"); }
+    return;
+  }
+  if (portalActive) {
+    if (g_mqttOk) { g_mqttOk = false; logMqttStatus("MQTT: offline (setup portal active)"); }
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    if (g_mqttOk) { g_mqttOk = false; logMqttStatus("MQTT: offline (WiFi disconnected)"); }
+    return;
+  }
+  if (mqttHost.length() == 0) {
+    if (g_mqttOk) { g_mqttOk = false; logMqttStatus("MQTT: offline (broker unset)"); }
+    return;
+  }
+  if (mqtt.connected()) {
+    mqtt.loop();
+    if (!mqtt.connected() && g_mqttOk) {
+      g_mqttOk = false;
+      logMqttStatus("MQTT: disconnected");
+    }
+    return;
+  }
+  if (g_mqttOk) {
+    g_mqttOk = false;
+    logMqttStatus("MQTT: disconnected");
+  }
   static unsigned long lastTry = 0;
   if (millis() - lastTry < 5000) return;
   lastTry = millis();
@@ -514,6 +553,8 @@ void setup() {
 
   loadCreds();
   loadMqtt();
+  if (mqttEnabled) logMsg("MQTT: enabled " + mqttHost + ":" + String(mqttPort));
+  else             logMsg("MQTT: disabled");
 
   bool connected = false;
   if (forcePortal)               { Serial.println("BOOT held -> forcing setup portal"); logMsg("BOOT: setup portal forced"); }
