@@ -334,6 +334,13 @@ function tog(){var p=document.getElementById('pass'),e=document.getElementById('
 </script></body></html>
 )HTML";
 
+// TX waveform exactly as the remote sends it: inverted PWM, ~365 us unit,
+// 44-unit (~16 ms) sync gap. rc-switch's built-in protos 11/12 use a 36-unit
+// gap; the hood's standby (power-on) decoder needs the full-length preamble.
+static const RCSwitch::Protocol NOVY_TX_PROTO = {
+  NOVY_PULSE_LEN, { NOVY_SYNC_LOW, 1 }, { 1, 2 }, { 2, 1 }, true
+};
+
 // ---- RF receive: idle in RX so presses on the physical Novy remote are decoded ----
 // GDO0 is shared: the CC1101 drives it in RX (demodulated OOK), we drive it in TX.
 bool rxListening = false;
@@ -359,9 +366,11 @@ bool initRadio() {
   ELECHOUSE_cc1101.setCCMode(0);       // async serial OOK on GDO0
   ELECHOUSE_cc1101.setModulation(2);   // ASK/OOK
   ELECHOUSE_cc1101.setMHZ(433.92);
+  ELECHOUSE_cc1101.setRxBW(58);        // narrow RX bandwidth -> suppress idle noise
+                                       // (without it GDO0 spews noise edges while idling
+                                       //  in RX and the ISR storm starves loop()/web UI)
   ELECHOUSE_cc1101.setPA(12);
-  transmitter.setProtocol(12);         // renedis values
-  transmitter.setPulseLength(350);
+  transmitter.setProtocol(NOVY_TX_PROTO);       // exact remote waveform incl. 16 ms sync gap (pins.h)
   radioEnterRx();                      // idle listening for the physical remote
   delay(25);
   return ELECHOUSE_cc1101.getCC1101();
@@ -393,29 +402,34 @@ void sendRFCommand(ButtonCommand cmd, const char* label, int channelIndex = 0) {
   rxStop();                            // we drive GDO0 now; don't decode our own TX
   ELECHOUSE_cc1101.SetTx();
   transmitter.enableTransmit(TRANSMIT_433MHZ_PIN);
-  transmitter.setProtocol(12);
-  transmitter.setPulseLength(350);
+  transmitter.setProtocol(NOVY_TX_PROTO);
 
   String command;
-  int repeatCount = 3;
   switch (cmd) {
-    case CMD_LIGHT:  command = NOVY_COMMAND_LIGHT; repeatCount = 2; break;
+    case CMD_LIGHT:  command = NOVY_COMMAND_LIGHT; break;
     case CMD_POWER:  command = NOVY_COMMAND_POWER; break;
     case CMD_PLUS:   command = NOVY_COMMAND_PLUS;  break;
     case CMD_MINUS:  command = NOVY_COMMAND_MINUS; break;
     case CMD_NOVY:   command = NOVY_COMMAND_NOVY;  break;
   }
 
+  // ONE continuous burst = ONE button tap. The hood reads frames separated by
+  // only the 16 ms sync gap as a single press; longer gaps start a NEW press
+  // (3 bursts with 50 ms gaps made +/- jump 2 steps and made Power, a toggle,
+  // turn on and back off invisibly).
+  const int repeatCount = 8;           // ~0.3 s on air ≈ a short tap on the remote
   String rfCode = NOVY_DEVICE_CODE[channelIndex] + NOVY_PREFIX + command;
-  for (int i = 0; i < repeatCount; i++) { transmitter.send(rfCode.c_str()); delay(50); }
+  transmitter.setRepeatTransmit(repeatCount);
+  transmitter.send(rfCode.c_str());
   radioEnterRx();                      // back to listening for the remote
   logMsg(String(label) + " → RF " + rfCode + " ×" + repeatCount);
 }
 
 void route(const char* path, ButtonCommand cmd, const char* label) {
   server.on(path, HTTP_GET, [cmd, label]() {
-    sendRFCommand(cmd, label);                 // logs the click, then transmits
-    server.send(200, "text/html", logHtml());  // return fresh log -> instant UI update
+    logMsg(String(label) + " clicked");
+    server.send(200, "text/html", logHtml());  // respond first: the TX below blocks >1 s
+    sendRFCommand(cmd, label);
   });
 }
 
@@ -451,6 +465,7 @@ String mqttStateHint(int state) {
 
 // Incoming command: topic = <prefix>/button/<id>/set -> fire the matching RF button.
 void mqttCallback(char* topic, byte* payload, unsigned int len) {
+  if (len == 0) return;   // empty = retained-clear echo, never a real press
   String t(topic);
   for (int i = 0; i < MQTT_BTN_N; i++) {
     if (t == mqttCmdTopic(MQTT_BTNS[i].id)) {
@@ -524,7 +539,13 @@ bool mqttConnect() {
     return false;
   }
   mqtt.publish(st.c_str(), "online", true);       // retained availability
-  for (int i = 0; i < MQTT_BTN_N; i++) mqtt.subscribe(mqttCmdTopic(MQTT_BTNS[i].id).c_str());
+  for (int i = 0; i < MQTT_BTN_N; i++) {
+    String ct = mqttCmdTopic(MQTT_BTNS[i].id);
+    // Wipe any retained press BEFORE subscribing, or the broker replays it on
+    // every reconnect and the hood gets ghost button presses.
+    mqtt.publish(ct.c_str(), (const uint8_t*)"", 0, true);
+    mqtt.subscribe(ct.c_str());
+  }
   mqttPublishDiscovery();
   mqttPublishRemoteInitialState();
   g_mqttOk = true;
@@ -562,10 +583,13 @@ void mqttLoop() {
     g_mqttOk = false;
     logMqttStatus("MQTT: disconnected");
   }
+  // Each failed connect blocks loop() for the TCP timeout (~3 s), starving the
+  // web UI — back off after repeated failures instead of hammering every 5 s.
   static unsigned long lastTry = 0;
-  if (millis() - lastTry < 5000) return;
+  static int fails = 0;
+  if (millis() - lastTry < (fails >= 3 ? 60000UL : 5000UL)) return;
   lastTry = millis();
-  mqttConnect();
+  fails = mqttConnect() ? 0 : fails + 1;
 }
 
 // ===================== RF receive: physical remote presses =====================
@@ -574,20 +598,29 @@ void rfRxLoop() {
   if (!transmitter.available()) return;
   unsigned long value = transmitter.getReceivedValue();
   unsigned int  bits  = transmitter.getReceivedBitlength();
+  unsigned int  proto = transmitter.getReceivedProtocol();
+  unsigned int  pulse = transmitter.getReceivedDelay();
   transmitter.resetAvailable();
+  if (value == 0 || bits < 10) return;   // undecodable or short noise
+
+  static unsigned long lastValue = 0, lastSeen = 0;
+  bool repeatBurst = lastSeen && value == lastValue && (millis() - lastSeen < 1200);
+  lastValue = value;
+  lastSeen = millis();
+  if (repeatBurst) return;
+
+  String bin;
+  for (int i = bits - 1; i >= 0; i--) bin += (char)('0' + ((value >> i) & 1));
+  logMsg("Remote: RF " + bin + " (" + String(bits) + "b, proto " + String(proto) +
+         ", pulse " + String(pulse) + "us)");
 
   // LIGHT frame = <device code(4)><prefix(4)><light cmd(10)>. Match on the low
   // 14 bits (prefix+command) so any remote channel pairing is recognized.
   static const uint32_t LIGHT_SUFFIX = strtoul((NOVY_PREFIX + NOVY_COMMAND_LIGHT).c_str(), nullptr, 2);
-  if (bits != 18 || (value & 0x3FFF) != LIGHT_SUFFIX) return;
-
-  static unsigned long lastSeen = 0;
-  bool repeatBurst = lastSeen && (millis() - lastSeen < 1200);
-  lastSeen = millis();
-  if (repeatBurst) return;
-
-  logMsg("Remote: Light pressed (RF " + String(value) + ")");
-  mqttPublishRemotePress("light");
+  if (bits == 18 && (value & 0x3FFF) == LIGHT_SUFFIX) {
+    logMsg("Remote: Light pressed (RF " + String(value) + ")");
+    mqttPublishRemotePress("light");
+  }
 }
 
 // ===================== Pull-OTA self-update from GitHub release =====================
@@ -641,6 +674,8 @@ void doHttpUpdate() {
 
 void setup() {
   Serial.begin(115200);
+  Serial.setTxTimeoutMs(0);  // native USB CDC: drop output instead of blocking
+                             // ~2 s per line when no host is reading the port
   delay(800);
   Serial.println("\n=== Novy hood WiFi controller ===");
   logMsg(String("BOOT: firmware v") + FW_VER);
@@ -788,15 +823,11 @@ void setup() {
 
   // Firmware self-update: report current vs latest version as JSON for the UI.
   server.on("/update/check", HTTP_GET, []() {
-    g_latestVersion = fetchLatestVersion();              // blocking ≤8s (like /scan)
+    // Served from cache: the actual GitHub fetch blocks ~3-8 s (TLS), so it
+    // runs in loop() in the background — never inside an HTTP handler, or
+    // every button click on a freshly opened UI queues behind it.
     bool enabled = strlen(FW_UPDATE_REPO) > 0;
     bool avail   = enabled && g_latestVersion.length() && g_latestVersion != String(FW_VER);
-    if (avail && !g_updateLogged) {
-      logMsg(String("UPDATE: v") + g_latestVersion + " available");
-      g_updateLogged = true;
-    } else if (!avail) {
-      g_updateLogged = false;
-    }
     String j = String("{\"cur\":\"") + FW_VER + "\",\"latest\":\"" + g_latestVersion +
                "\",\"enabled\":" + (enabled ? "true" : "false") +
                ",\"avail\":" + (avail ? "true" : "false") +
@@ -833,6 +864,22 @@ void loop() {
   if (millis() - lastRadioCheck >= 5000) {
     lastRadioCheck = millis();
     refreshRadioStatus();
+  }
+
+  // Background release check (15 s after boot, then every 6 h). The TLS fetch
+  // blocks loop() for a few seconds, so it must not coincide with UI requests.
+  static unsigned long lastVersionCheck = 0;
+  if (!portalActive && WiFi.status() == WL_CONNECTED && strlen(FW_UPDATE_REPO) > 0 &&
+      (lastVersionCheck == 0 ? millis() > 15000 : millis() - lastVersionCheck > 6UL * 3600UL * 1000UL)) {
+    lastVersionCheck = millis();
+    g_latestVersion = fetchLatestVersion();
+    bool avail = g_latestVersion.length() && g_latestVersion != String(FW_VER);
+    if (avail && !g_updateLogged) {
+      logMsg(String("UPDATE: v") + g_latestVersion + " available");
+      g_updateLogged = true;
+    } else if (!avail) {
+      g_updateLogged = false;
+    }
   }
 
   // Race-free status heartbeat: prints WiFi state + IP every 3s.
